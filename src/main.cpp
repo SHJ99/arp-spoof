@@ -119,7 +119,6 @@ void arpSpoof(string inter, string senderIp, string targetIp) {
 void packetHandler(u_char* userData, const struct pcap_pkthdr* pkthdr, const u_char* packet) {
     size_t siz=pkthdr->caplen;
     packets.push(make_pair(packet, siz));
-    cout<<"put one packet to queue"<<endl;
 }
 
 void Listen(string inter, string sip) { //스레드2, pcap_loop.
@@ -176,23 +175,15 @@ void relay(char* inter, string senderIP, string targetIP) { //MAC targetmac, MAC
                 int res = pcap_sendpacket(handle, packet, len);//패킷 크기에 유의.
                 if (res != 0)
                     fprintf(stderr, "pcap_sendpacket return %d error=%s\n", res, pcap_geterr(handle));
-                else
-                {
-                    for (size_t i = 0; i < sizeof(EthArpPacket); ++i)
-                        printf("%hhX ", packet[i]);
-                    cout<<"\nsend relay"<<endl;
-                }
+                //else{
+                //    for (size_t i = 0; i < sizeof(EthArpPacket); ++i)
+                //        printf("%hhX ", packet[i]);
+                //}
             }
         }
     }
 
     pcap_close(handle);
-}
-
-void workerThread(char* interface, const string& senderIP, const string& targetIP) {
-    arpSpoof(interface, senderIP, targetIP);
-    Listen(interface, senderIP);
-    relay(interface, senderIP, targetIP);
 }
 
 int main(int argc, char* argv[]) { //interface, sender ip, target ip
@@ -201,15 +192,21 @@ int main(int argc, char* argv[]) { //interface, sender ip, target ip
 	    return 0;
     }
 
-    thread autoArp(arpSpoof, argv[1], argv[2], argv[3]); //use 1,2,3 / smac, mymac
-    thread listener(Listen, argv[1], argv[2]); //use 1 / smac
-    thread relayGo(relay, argv[1], argv[2], argv[3]); //use 1,2 / targetmac, mymac
+    for(int i=2; i<argc; i=i+2){
 
-    autoArp.detach(); //메인 스레드와 관계없이 돌아감.
+    thread autoArp(arpSpoof, argv[1], argv[i], argv[i+1]); 
+    thread listener(Listen, argv[1], argv[i]); 
+    thread relayGo(relay, argv[1], argv[i], argv[i+1]); 
+
+    autoArp.detach();
     listener.detach();
     relayGo.detach();
 
     while (true) { //대기.
         this_thread::sleep_for(std::chrono::seconds(1));
     }
+    
+    }
+    
+    return 0;
 }
