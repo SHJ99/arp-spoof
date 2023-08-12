@@ -195,7 +195,17 @@ void relay(char* inter, string senderIP, MAC targetmac, MAC mymac) {
     pcap_t* handle = pcap_create(dev, errbuf);
     pcap_activate(handle);//핸들 활성화.
 
-    while (1) {
+    while (1) {/*
+        for (int i = 0; i < 3; ++i) {
+            uint8_t temp = targetmac[i];
+            targetmac[i] = targetmac[5 - i];
+            targetmac[5 - i] = temp;
+        }
+        for (int i = 0; i < 3; ++i) {
+            uint8_t temp = mymac[i];
+            mymac[i] = mymac[5 - i];
+            mymac[5 - i] = temp;
+        }*/
         if (packets.empty()) { //느릴경우 main으로 옮길것.
             this_thread::sleep_for(std::chrono::milliseconds(100));//패킷 큐가 비었을 경우 슬립 1초
             //cout<<"stay....."<<endl;
@@ -204,13 +214,13 @@ void relay(char* inter, string senderIP, MAC targetmac, MAC mymac) {
         else {
             u_char* packet = (u_char*)packets.front();
             packets.pop();
-            //cout<<"get one packet"<<endl;
+            cout<<"get one packet"<<endl;
             struct libnet_ethernet_hdr* eth_hdr = (struct libnet_ethernet_hdr*)packet;
             struct libnet_ipv4_hdr* ip_hdr = (struct libnet_ipv4_hdr*)(packet + 14);
             
             if (ip_hdr->ip_src.s_addr == htonl(Ip(senderIP))) {//
                 //eth_hdr->ether_shost = mymac;
-                //cout<<"ip is equal"<<endl;
+                cout<<"ip is equal"<<endl;
                 memcpy(eth_hdr->ether_shost, mymac, sizeof(MAC));
                 //copy(begin(mymac), end(mymac), begin(eth_hdr->ether_shost));
                 //eth_hdr->ether_dhost = targetMac;
@@ -220,8 +230,8 @@ void relay(char* inter, string senderIP, MAC targetmac, MAC mymac) {
                 int res = pcap_sendpacket(handle, packet, sizeof(EthArpPacket));//체크해야함
                 if (res != 0)
                     fprintf(stderr, "pcap_sendpacket return %d error=%s\n", res, pcap_geterr(handle));
-                //else
-                    //cout<<"send relay"<<endl;
+                else
+                    cout<<"send relay"<<endl;
             }
         }
     }
